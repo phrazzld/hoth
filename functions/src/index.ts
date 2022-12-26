@@ -1,10 +1,13 @@
 import * as admin from "firebase-admin";
 import * as functions from "firebase-functions";
+const serviceAccount = require("../hoth-authentication-e41a562557a7.json");
 
-admin.initializeApp();
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
 
 // Define request and response interfaces
-interface CreateUserRequest {
+export interface CreateUserRequest {
   apiKey: string;
   email: string;
   password: string;
@@ -14,15 +17,17 @@ interface CreateUserResponse {
   userId: string;
 }
 
+// TODO: Require license specifications to create
 interface ProvisionLicenseRequest {
   apiKey: string;
   userId: string;
-  transactionId: string;
 }
 
 interface ProvisionLicenseResponse {
   licenseKey: string;
 }
+
+// TODO: Write isAuthorizedRequest function
 
 // Define request and response interfaces
 interface AuthenticateUserRequest {
@@ -39,34 +44,62 @@ interface AuthenticateUserResponse {
 // Verify the API key
 // Find the client with the API key
 export async function isValidApiKey(apiKey: string): Promise<boolean> {
+  console.log("*** isValidApiKey ***");
+  console.log("apiKey:", apiKey);
   // Check if the API key exists in Cloud Firestore
   const firestore = admin.firestore();
-  const client = await firestore
-    .collection("clients")
-    .where("apiKey", "==", apiKey)
-    .get();
-  return !client.empty;
+  const client = await firestore.collection("clients").doc(apiKey).get();
+
+  console.log("client.exists:", client.exists);
+  return client.exists;
 }
 
 // Create user function
-async function createUser(req: CreateUserRequest): Promise<CreateUserResponse> {
+export async function createUser(
+  req: CreateUserRequest
+): Promise<CreateUserResponse> {
+  console.log("*** createUser ***");
+  console.log("req.apiKey:", req.apiKey);
   await isValidApiKey(req.apiKey);
+  console.log("is valid api key");
   // Create user in Firebase auth service
-  const userRecord = await admin.auth().createUser({
-    email: req.email,
-    password: req.password,
-  });
-  // Create user in Firestore
-  const firestore = admin.firestore();
-  await firestore
-    .collection("clients")
-    .doc(req.apiKey)
-    .collection("users")
-    .doc(userRecord.uid)
-    .set({
-      email: req.email,
-    });
-  return { userId: userRecord.uid };
+  console.log("creating auth user");
+  console.log("req.email:", req.email);
+  console.log("req.password", req.password);
+  // Only create a new auth user if one does not already exist
+  try {
+    const user = await admin.auth().getUserByEmail(req.email);
+    console.log(`User with email ${req.email} already exists.`);
+    console.log("user:", user);
+    console.log("user.uid:", user.uid);
+
+    const firestore = admin.firestore();
+    await firestore
+      .collection("clients")
+      .doc(req.apiKey)
+      .collection("users")
+      .doc(user.uid)
+      .set({
+        email: req.email,
+      });
+    console.log("created firestore user");
+
+    // Get the user document
+    return { userId: user.uid };
+  } catch (error: any) {
+    if (error.code === "auth/user-not-found") {
+      const user = await admin.auth().createUser({
+        email: req.email,
+        password: req.password,
+      });
+      console.log(`Successfully created new user: ${user.uid}`);
+      console.log("user:", user);
+      return { userId: user.uid };
+    } else {
+      console.log(`Error getting user by email: ${error}`);
+      throw new functions.https.HttpsError("internal", error);
+    }
+  }
 }
 
 // Provision license function
@@ -112,6 +145,7 @@ async function authenticateUser(
 // Expose create user function as a Firebase Cloud Function
 export const createUserFunction = functions.https.onRequest(
   async (req, res) => {
+    console.log("*** createUserFunction ***");
     try {
       const createUserResponse = await createUser(
         req.body as CreateUserRequest

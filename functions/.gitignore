@@ -7,3 +7,8 @@ typings/
 
 # Node.js dependency directory
 node_modules/
+
+# Google Cloud Platform service key
+hoth-authentication-e41a562557a7.json
+
+.env
